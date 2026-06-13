@@ -15,7 +15,7 @@ from .device_data import DeviceData, DeviceOptions
 _LOGGER = logging.getLogger(__name__)
 
 ECOFLOW_DOMAIN = "ecoflow_cloud"
-CONFIG_VERSION = 11
+CONFIG_VERSION = 12
 
 _PLATFORMS = {
     Platform.BINARY_SENSOR,
@@ -60,9 +60,15 @@ OPTS_POWER_STEP: Final = "power_step"
 OPTS_REFRESH_PERIOD_SEC: Final = "refresh_period_sec"
 OPTS_ASSUME_OFFLINE_SEC: Final = "assume_offline_sec"
 OPTS_VERBOSE_STATUS_MODE: Final = "verbose_status_mode"
+OPTS_ACK_TIMEOUT_SEC: Final = "ack_timeout_sec"
+OPTS_ACK_RETRIES: Final = "ack_retries"
+OPTS_ACK_RETRY_DELAY_SEC: Final = "ack_retry_delay_sec"
 
 DEFAULT_REFRESH_PERIOD_SEC: Final = 5
 DEFAULT_ASSUME_OFFLINE_SEC: Final = 300  # 5 minutes
+DEFAULT_ACK_TIMEOUT_SEC: Final = 10
+DEFAULT_ACK_RETRIES: Final = 1
+DEFAULT_ACK_RETRY_DELAY_SEC: Final = 2
 
 _STATUS_COORDINATOR_KEY = "__status_coordinator"
 
@@ -173,6 +179,16 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry):
         updated = hass.config_entries.async_update_entry(config_entry, version=11)
         _LOGGER.info("Config entries updated to version %d", config_entry.version)
 
+    if config_entry.version == 11:
+        new_options = dict(config_entry.options)
+        for sn, device_options in new_options[CONF_DEVICE_LIST].items():
+            device_options[OPTS_ACK_TIMEOUT_SEC] = DEFAULT_ACK_TIMEOUT_SEC
+            device_options[OPTS_ACK_RETRIES] = DEFAULT_ACK_RETRIES
+            device_options[OPTS_ACK_RETRY_DELAY_SEC] = DEFAULT_ACK_RETRY_DELAY_SEC
+
+        updated = hass.config_entries.async_update_entry(config_entry, version=12, options=new_options)
+        _LOGGER.info("Config entries updated to version %d", config_entry.version)
+
     return updated
 
 
@@ -189,6 +205,9 @@ def extract_devices(entry: ConfigEntry) -> dict[str, DeviceData]:
                 entry.options[CONF_DEVICE_LIST][sn][OPTS_DIAGNOSTIC_MODE],
                 entry.options[CONF_DEVICE_LIST][sn][OPTS_VERBOSE_STATUS_MODE],
                 entry.options[CONF_DEVICE_LIST][sn][OPTS_ASSUME_OFFLINE_SEC],
+                entry.options[CONF_DEVICE_LIST][sn][OPTS_ACK_TIMEOUT_SEC],
+                entry.options[CONF_DEVICE_LIST][sn][OPTS_ACK_RETRIES],
+                entry.options[CONF_DEVICE_LIST][sn][OPTS_ACK_RETRY_DELAY_SEC],
             ),
             None,
             None,

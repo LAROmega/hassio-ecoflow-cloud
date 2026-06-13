@@ -32,8 +32,14 @@ from custom_components.ecoflow_cloud import (
     CONF_USERNAME,
     CONFIG_VERSION,
     DEFAULT_ASSUME_OFFLINE_SEC,
+    DEFAULT_ACK_RETRIES,
+    DEFAULT_ACK_RETRY_DELAY_SEC,
+    DEFAULT_ACK_TIMEOUT_SEC,
     DEFAULT_REFRESH_PERIOD_SEC,
     ECOFLOW_DOMAIN,
+    OPTS_ACK_RETRIES,
+    OPTS_ACK_RETRY_DELAY_SEC,
+    OPTS_ACK_TIMEOUT_SEC,
     OPTS_ASSUME_OFFLINE_SEC,
     OPTS_DIAGNOSTIC_MODE,
     OPTS_POWER_STEP,
@@ -278,6 +284,9 @@ class EcoflowConfigFlow(ConfigFlow, domain=ECOFLOW_DOMAIN):
             OPTS_DIAGNOSTIC_MODE: False,
             OPTS_VERBOSE_STATUS_MODE: False,
             OPTS_ASSUME_OFFLINE_SEC: DEFAULT_ASSUME_OFFLINE_SEC,
+            OPTS_ACK_TIMEOUT_SEC: DEFAULT_ACK_TIMEOUT_SEC,
+            OPTS_ACK_RETRIES: DEFAULT_ACK_RETRIES,
+            OPTS_ACK_RETRY_DELAY_SEC: DEFAULT_ACK_RETRY_DELAY_SEC,
         }
 
         return await self.update_or_create()
@@ -421,6 +430,9 @@ class EcoflowConfigFlow(ConfigFlow, domain=ECOFLOW_DOMAIN):
             OPTS_DIAGNOSTIC_MODE: ("Diagnostic".lower() == user_input[CONF_DEVICE_TYPE].lower()),
             OPTS_VERBOSE_STATUS_MODE: False,
             OPTS_ASSUME_OFFLINE_SEC: DEFAULT_ASSUME_OFFLINE_SEC,
+            OPTS_ACK_TIMEOUT_SEC: DEFAULT_ACK_TIMEOUT_SEC,
+            OPTS_ACK_RETRIES: DEFAULT_ACK_RETRIES,
+            OPTS_ACK_RETRY_DELAY_SEC: DEFAULT_ACK_RETRY_DELAY_SEC,
         }
 
         return await self.update_or_create()
@@ -475,6 +487,9 @@ class EcoflowOptionsFlow(OptionsFlow):
                         vol.Required(OPTS_DIAGNOSTIC_MODE, default=device_options.diagnostic_mode): bool,
                         vol.Required(OPTS_VERBOSE_STATUS_MODE, default=device_options.verbose_status_mode): bool,
                         vol.Required(OPTS_ASSUME_OFFLINE_SEC, default=device_options.assume_offline_sec): int,
+                        vol.Required(OPTS_ACK_TIMEOUT_SEC, default=device_options.ack_timeout_sec): int,
+                        vol.Required(OPTS_ACK_RETRIES, default=device_options.ack_retries): int,
+                        vol.Required(OPTS_ACK_RETRY_DELAY_SEC, default=device_options.ack_retry_delay_sec): int,
                     }
                 ),
             )
@@ -486,6 +501,9 @@ class EcoflowOptionsFlow(OptionsFlow):
             OPTS_DIAGNOSTIC_MODE: user_input[OPTS_DIAGNOSTIC_MODE],
             OPTS_VERBOSE_STATUS_MODE: user_input[OPTS_VERBOSE_STATUS_MODE],
             OPTS_ASSUME_OFFLINE_SEC: user_input[OPTS_ASSUME_OFFLINE_SEC],
+            OPTS_ACK_TIMEOUT_SEC: user_input[OPTS_ACK_TIMEOUT_SEC],
+            OPTS_ACK_RETRIES: user_input[OPTS_ACK_RETRIES],
+            OPTS_ACK_RETRY_DELAY_SEC: user_input[OPTS_ACK_RETRY_DELAY_SEC],
         }
 
         return self.async_create_entry(title="", data=new_options)

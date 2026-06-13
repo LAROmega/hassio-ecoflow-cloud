@@ -70,7 +70,10 @@
                     "refresh_period_sec": "Data refresh period (sec)",
                     "diagnostic_mode": "Diagnostic mode",
                     "assume_offline_sec": "Assume offline timeout (sec)",
-                    "verbose_status_mode": "Verbose status mode"
+                    "verbose_status_mode": "Verbose status mode",
+                    "ack_timeout_sec": "Command ACK timeout (sec)",
+                    "ack_retries": "Command retry count",
+                    "ack_retry_delay_sec": "Command retry delay (sec)"
                 }
             }
         }

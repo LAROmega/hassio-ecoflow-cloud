@@ -10,6 +10,9 @@ class DeviceOptions:
     diagnostic_mode: bool
     verbose_status_mode: bool
     assume_offline_sec: int
+    ack_timeout_sec: int
+    ack_retries: int
+    ack_retry_delay_sec: int
 
 
 @dataclasses.dataclass

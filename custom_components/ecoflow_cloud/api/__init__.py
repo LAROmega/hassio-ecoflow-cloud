@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from typing import Any
@@ -34,6 +35,7 @@ class EcoflowApiClient(ABC):
         self.mqtt_client: EcoflowMQTTClient
         self._mqtt_reconnect_last_attempt = 0.0
         self._mqtt_reconnect_count = 0
+        self._set_message_locks: dict[str, threading.Lock] = {}
 
     @abstractmethod
     async def login(self):
@@ -83,6 +85,7 @@ class EcoflowApiClient(ABC):
 
     def add_device(self, device):
         self.devices[device.device_data.sn] = device
+        self._set_message_locks.setdefault(device.device_data.sn, threading.Lock())
 
     def remove_device(self, device):
         self.devices.pop(device.device_data.sn, None)
@@ -123,12 +126,130 @@ class EcoflowApiClient(ABC):
 
         self.mqtt_client.publish(self.devices[device_sn].device_info.get_topic, command.to_mqtt_payload())
 
-    def send_set_message(self, device_sn: str, mqtt_state: dict[str, Any], command: dict | Message):
-        if isinstance(command, dict):
-            command = JSONMessage(command)
+    @staticmethod
+    def _set_reply_has_error(reply: dict[str, Any]) -> bool:
+        code = reply.get("code")
+        data = reply.get("data")
+        ack = data.get("ack") if isinstance(data, dict) else None
+        return code not in (None, 0, "0") or ack not in (None, 0, "0")
 
-        self.devices[device_sn].data.update_to_target_state(mqtt_state)
-        self.mqtt_client.publish(self.devices[device_sn].device_info.set_topic, command.to_mqtt_payload())
+    @staticmethod
+    def _set_reply_summary(reply: dict[str, Any]) -> str:
+        data = reply.get("data")
+        ack = data.get("ack") if isinstance(data, dict) else None
+        return f"code={reply.get('code')} ack={ack} operateType={reply.get('operateType')}"
+
+    def send_set_message(
+        self,
+        device_sn: str,
+        mqtt_state: dict[str, Any],
+        command: dict | Message,
+        *,
+        wait_for_ack: bool = False,
+        ack_timeout: float = 10.0,
+        ack_retries: int = 0,
+        retry_delay: float = 1.0,
+        post_ack_delay: float = 0.0,
+        command_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        command_dict = command if isinstance(command, dict) else None
+        if command_dict is not None:
+            command = JSONMessage(command_dict)
+
+        message_id = getattr(command, "message_id", None)
+        description = command_name or "set command"
+
+        if not wait_for_ack:
+            self.devices[device_sn].data.update_to_target_state(mqtt_state)
+            self.mqtt_client.publish(self.devices[device_sn].device_info.set_topic, command.to_mqtt_payload())
+            return None
+
+        lock = self._set_message_locks.setdefault(device_sn, threading.Lock())
+        with lock:
+            attempts = ack_retries + 1 if command_dict is not None else 1
+            last_reply: dict[str, Any] | None = None
+            for attempt in range(1, attempts + 1):
+                if command_dict is not None:
+                    command = JSONMessage(command_dict)
+                message_id = getattr(command, "message_id", None)
+                _LOGGER.info(
+                    "EcoFlow sending %s to %s (attempt=%d/%d, message_id=%s)",
+                    description,
+                    device_sn,
+                    attempt,
+                    attempts,
+                    message_id,
+                )
+                self.mqtt_client.publish(self.devices[device_sn].device_info.set_topic, command.to_mqtt_payload())
+                if message_id is None:
+                    _LOGGER.warning("EcoFlow %s sent without a trackable message id", description)
+                    return None
+
+                reply = self.devices[device_sn].data.wait_for_set_reply(str(message_id), ack_timeout)
+                if reply is None:
+                    _LOGGER.warning(
+                        "EcoFlow %s timed out waiting for set_reply from %s "
+                        "(attempt=%d/%d, message_id=%s, timeout=%.1fs)",
+                        description,
+                        device_sn,
+                        attempt,
+                        attempts,
+                        message_id,
+                        ack_timeout,
+                    )
+                    if attempt < attempts:
+                        _LOGGER.info(
+                            "EcoFlow retrying %s for %s after %.1fs",
+                            description,
+                            device_sn,
+                            retry_delay,
+                        )
+                        time.sleep(retry_delay)
+                        continue
+                    if post_ack_delay > 0:
+                        time.sleep(post_ack_delay)
+                    return None
+
+                last_reply = reply
+                if self._set_reply_has_error(reply):
+                    _LOGGER.warning(
+                        "EcoFlow %s set_reply error from %s "
+                        "(attempt=%d/%d, message_id=%s, %s)",
+                        description,
+                        device_sn,
+                        attempt,
+                        attempts,
+                        message_id,
+                        self._set_reply_summary(reply),
+                    )
+                    if attempt < attempts:
+                        _LOGGER.info(
+                            "EcoFlow retrying %s for %s after %.1fs",
+                            description,
+                            device_sn,
+                            retry_delay,
+                        )
+                        time.sleep(retry_delay)
+                        continue
+                    if post_ack_delay > 0:
+                        time.sleep(post_ack_delay)
+                    return last_reply
+
+                _LOGGER.info(
+                    "EcoFlow %s acknowledged by %s (attempt=%d/%d, message_id=%s, %s)",
+                    description,
+                    device_sn,
+                    attempt,
+                    attempts,
+                    message_id,
+                    self._set_reply_summary(reply),
+                )
+                self.devices[device_sn].data.update_to_target_state(mqtt_state)
+                if post_ack_delay > 0:
+                    time.sleep(post_ack_delay)
+                return reply
+
+            return last_reply
 
     def start(self):
         _LOGGER.debug("Starting MQTT client for %s", self.mqtt_info.client_id)

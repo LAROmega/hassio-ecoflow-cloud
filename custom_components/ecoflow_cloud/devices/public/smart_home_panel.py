@@ -52,6 +52,8 @@ class ScheduledChargeChStaSelectEntity(DictSelectEntity):
 class CircuitModeSelectEntity(DictSelectEntity):
     """Select entity for circuit mode control (Auto/Grid/Battery/Off)."""
 
+    POST_ACK_DELAY_SECONDS = 1.0
+
     def __init__(self, client: EcoflowApiClient, device: BaseDevice, ch_index: int) -> None:
         self._ch = ch_index
         key = f"heartbeat.loadCmdChCtrlInfos[{ch_index}].ctrlSta"
@@ -81,23 +83,48 @@ class CircuitModeSelectEntity(DictSelectEntity):
         except Exception:
             return False
 
-    def select_option(self, option: str) -> None:
+    def _option_values(self, option: str) -> tuple[int, int, int] | None:
         if option == "Auto":
-            sta, ctrl_mode, target = 0, 0, 0
+            return 0, 0, 0
         elif option == "Grid":
-            sta, ctrl_mode, target = 0, 1, 0
+            return 0, 1, 0
         elif option == "Battery":
-            sta, ctrl_mode, target = 1, 1, 1
+            return 1, 1, 1
         elif option == "Off":
-            sta, ctrl_mode, target = 2, 1, 2
-        else:
+            return 2, 1, 2
+        return None
+
+    def _select_option_with_ack(self, option: str) -> None:
+        values = self._option_values(option)
+        if values is None:
             return
+        sta, ctrl_mode, target = values
         command = {
             "moduleType": 0,
             "operateType": "TCP",
             "params": {"sta": sta, "ctrlMode": ctrl_mode, "ch": self._ch, "cmdSet": 11, "id": 16},
         }
-        self.send_set_message(target, command)
+        target_state = {
+            self._adopt_json_key(f"heartbeat.loadCmdChCtrlInfos[{self._ch}].ctrlSta"): target,
+            self._adopt_json_key(f"heartbeat.loadCmdChCtrlInfos[{self._ch}].ctrlMode"): ctrl_mode,
+        }
+        self._client.send_set_message(
+            self._device.device_info.sn,
+            target_state,
+            command,
+            wait_for_ack=True,
+            ack_timeout=self._device.device_data.options.ack_timeout_sec,
+            ack_retries=self._device.device_data.options.ack_retries,
+            retry_delay=self._device.device_data.options.ack_retry_delay_sec,
+            post_ack_delay=self.POST_ACK_DELAY_SECONDS,
+            command_name=f"SHP circuit {self._ch + 1} mode {option}",
+        )
+
+    async def async_select_option(self, option: str) -> None:
+        await self.hass.async_add_executor_job(self._select_option_with_ack, option)
+
+    def select_option(self, option: str) -> None:
+        self._select_option_with_ack(option)
 
 
 class AggregatedWattsSensorEntity(WattsSensorEntity):

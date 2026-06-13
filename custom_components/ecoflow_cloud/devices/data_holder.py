@@ -1,6 +1,9 @@
 import dataclasses
 import logging
+import threading
+import time
 from collections.abc import Callable
+from collections import OrderedDict
 from typing import Any, Protocol, TypeVar
 
 import jsonpath_ng.ext as jp
@@ -59,6 +62,8 @@ class EcoflowDataHolder:
         self.set = BoundFifoList[dict[str, Any]]()
         self.set_reply = BoundFifoList[dict[str, Any]]()
         self.set_reply_time = dt.utcnow().replace(year=2000, month=1, day=1, hour=0, minute=0, second=0)
+        self._set_reply_condition = threading.Condition()
+        self._set_reply_by_id: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
         self.get = BoundFifoList[dict[str, Any]]()
         self.get_reply = BoundFifoList[dict[str, Any]]()
@@ -83,6 +88,26 @@ class EcoflowDataHolder:
     def add_set_reply_message(self, data: PreparedData):
         self.__accept_prepared_data(data, self.set_reply.append)
         self.set_reply_time = dt.utcnow()
+        if isinstance(data.raw_data, dict):
+            message_id = data.raw_data.get("id")
+            if message_id is not None:
+                with self._set_reply_condition:
+                    self._set_reply_by_id[str(message_id)] = data.raw_data
+                    while len(self._set_reply_by_id) > 100:
+                        self._set_reply_by_id.popitem(last=False)
+                    self._set_reply_condition.notify_all()
+
+    def wait_for_set_reply(self, message_id: str, timeout: float) -> dict[str, Any] | None:
+        deadline = time.monotonic() + timeout
+        with self._set_reply_condition:
+            while True:
+                reply = self._set_reply_by_id.get(str(message_id))
+                if reply is not None:
+                    return reply
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._set_reply_condition.wait(remaining)
 
     def add_get_message(self, data: PreparedData):
         self.__accept_prepared_data(data, self.get.append)
