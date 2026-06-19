@@ -24,6 +24,7 @@ from custom_components.ecoflow_cloud.number import (
 )
 from custom_components.ecoflow_cloud.select import DictSelectEntity
 from custom_components.ecoflow_cloud.sensor import (
+    BaseSensorEntity,
     InEnergySensorEntity,
     InWattsSensorEntity,
     LevelSensorEntity,
@@ -146,6 +147,73 @@ class AggregatedWattsSensorEntity(WattsSensorEntity):
                 self.schedule_update_ha_state()
 
 
+class CircuitStatusSensorEntity(BaseSensorEntity):
+    """Derived status sensor for SHP circuit mode and power source."""
+
+    _MODE_MAP = {0: "Auto", 1: "Manual"}
+    _SOURCE_MAP = {0: "Grid", 1: "Battery"}
+
+    def __init__(self, client: EcoflowApiClient, device: BaseDevice, ch_index: int) -> None:
+        self._ch = ch_index
+        super().__init__(
+            client,
+            device,
+            f"circuit{ch_index + 1}.status",
+            const.CIRCUIT_N_STATUS % (ch_index + 1),
+            enabled=False,
+        )
+        self._ctrl_mode_expr = jp.parse(
+            self._adopt_json_key(f"heartbeat.loadCmdChCtrlInfos[{ch_index}].ctrlMode")
+        )
+        self._ctrl_sta_expr = jp.parse(
+            self._adopt_json_key(f"heartbeat.loadCmdChCtrlInfos[{ch_index}].ctrlSta")
+        )
+        self._pow_type_expr = jp.parse(self._adopt_json_key(f"'infoList'[{ch_index}].powType"))
+
+    @staticmethod
+    def _single_value(expr, data):
+        values = expr.find(data)
+        return values[0].value if len(values) == 1 else None
+
+    def _mark_unavailable(self):
+        if self._attr_available:
+            self._attr_available = False
+            self.schedule_update_ha_state()
+
+    def _updated(self, data: dict):
+        ctrl_mode = self._single_value(self._ctrl_mode_expr, data)
+        ctrl_sta = self._single_value(self._ctrl_sta_expr, data)
+
+        try:
+            mode = self._MODE_MAP[int(ctrl_mode)]
+            ctrl_sta = int(ctrl_sta)
+        except (KeyError, TypeError, ValueError):
+            self._mark_unavailable()
+            return
+
+        if ctrl_sta not in (0, 1, 2):
+            self._mark_unavailable()
+            return
+
+        if ctrl_sta == 2:
+            source = "Off"
+        else:
+            pow_type = self._single_value(self._pow_type_expr, data)
+            try:
+                pow_type = int(pow_type)
+            except (TypeError, ValueError):
+                self._mark_unavailable()
+                return
+            source = self._SOURCE_MAP.get(pow_type)
+            if source is None:
+                self._mark_unavailable()
+                return
+
+        self._attr_available = True
+        if self._update_value(f"{mode} - {source}"):
+            self.schedule_update_ha_state()
+
+
 class SmartHomePanel(BaseDevice):
     # Scheduled charge defaults and limits
     SCHEDULED_CHARGE_BATTERY_MIN = 50
@@ -211,6 +279,7 @@ class SmartHomePanel(BaseDevice):
                 .attr(f"heartbeat.loadCmdChCtrlInfos[{i}].ctrlSta", "Circuit State", 0)
                 .attr(f"heartbeat.loadCmdChCtrlInfos[{i}].ctrlMode", "Control Mode (0=Auto,1=Manual)", 0)
             )
+            sensors.append(CircuitStatusSensorEntity(client, self, i))
 
         # Per-circuit Battery/Grid power sensors
         for i in range(10):
